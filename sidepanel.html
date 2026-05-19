@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>引用一致性核查</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <h1>引用一致性核查</h1>
+      <section class="status-area" aria-label="平台状态">
+        <p id="platform-status">平台状态：检测中</p>
+        <p id="container-status">回答容器：检测中</p>
+        <p id="class-status">问答Class：检测中</p>
+      </section>
+      <button id="scan-btn" type="button">扫描当前回答</button>
+      <section class="result-area" aria-label="结果区">
+        <h2>结果区</h2>
+        <div id="results"></div>
+      </section>
+    </main>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,453 @@
+(function initUrlTextMatchModule(globalScope) {
+  const MODULE_CACHE_TTL_MS = 10 * 60 * 1000;
+  const SOURCE_TEXT_CACHE = new Map();
+  const AI_TRANSLATION_CACHE = new Map();
+  const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+
+  function normalizeText(text) {
+    return (text || "").replace(/\s+/g, " ").trim().toLowerCase();
+  }
+
+  function stripHtmlToText(html) {
+    const withoutScript = (html || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ");
+    return withoutScript
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&#39;/gi, "'")
+      .replace(/&quot;/gi, "\"")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function tokenize(text) {
+    const normalized = normalizeText(text).replace(/[^\p{L}\p{N}\s]/gu, " ");
+    return normalized.split(/\s+/).filter(Boolean);
+  }
+
+  function detectDominantLanguage(text) {
+    const value = (text || "").trim();
+    if (!value) {
+      return "unknown";
+    }
+    const hanCount = (value.match(/[\u4e00-\u9fff]/g) || []).length;
+    const latinCount = (value.match(/[A-Za-z]/g) || []).length;
+    if (hanCount === 0 && latinCount === 0) {
+      return "unknown";
+    }
+    if (hanCount >= latinCount * 1.2 && hanCount >= 2) {
+      return "zh";
+    }
+    if (latinCount >= hanCount * 1.2 && latinCount >= 3) {
+      return "en";
+    }
+    return hanCount > latinCount ? "zh" : "en";
+  }
+
+  function toTranslationTargetLanguage(language) {
+    if (language === "zh") {
+      return "zh-CN";
+    }
+    if (language === "en") {
+      return "en";
+    }
+    return "";
+  }
+
+  function computeWindowContainmentScore(claimText, sourceText) {
+    const normalizedClaim = normalizeText(claimText);
+    const normalizedSource = normalizeText(sourceText);
+    if (!normalizedClaim || !normalizedSource) {
+      return 0;
+    }
+    if (normalizedSource.includes(normalizedClaim)) {
+      return 0.99;
+    }
+
+    const claimTokens = tokenize(normalizedClaim);
+    const sourceTokens = tokenize(normalizedSource);
+    if (!claimTokens.length || !sourceTokens.length) {
+      return 0;
+    }
+
+    const claimSet = new Set(claimTokens);
+    const minWindow = Math.max(8, claimTokens.length);
+    const maxWindow = Math.min(sourceTokens.length, Math.max(minWindow + 4, claimTokens.length * 2));
+    let bestScore = 0;
+
+    for (let windowSize = minWindow; windowSize <= maxWindow; windowSize += 2) {
+      for (let i = 0; i + windowSize <= sourceTokens.length; i += 1) {
+        const windowSet = new Set(sourceTokens.slice(i, i + windowSize));
+        let overlap = 0;
+        for (const token of claimSet) {
+          if (windowSet.has(token)) {
+            overlap += 1;
+          }
+        }
+        const score = overlap / claimSet.size;
+        if (score > bestScore) {
+          bestScore = score;
+        }
+        if (bestScore >= 0.99) {
+          return bestScore;
+        }
+      }
+    }
+    return bestScore;
+  }
+
+  function findEvidenceSnippet(sourceText, queryText) {
+    const source = sourceText || "";
+    const query = queryText || "";
+    if (!source || !query) {
+      return { snippet: "", start: -1, end: -1 };
+    }
+    const sourceLower = source.toLowerCase();
+    const queryLower = query.toLowerCase();
+    const index = sourceLower.indexOf(queryLower);
+    if (index >= 0) {
+      const snippetStart = Math.max(0, index - 80);
+      const snippetEnd = Math.min(source.length, index + query.length + 80);
+      return {
+        snippet: source.slice(snippetStart, snippetEnd),
+        start: index,
+        end: index + query.length
+      };
+    }
+
+    // fallback: use a short head sample when no direct substring found
+    return {
+      snippet: source.slice(0, 220),
+      start: -1,
+      end: -1
+    };
+  }
+
+  async function fetchTextWithTimeout(url, timeoutMs = 12000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+        redirect: "follow"
+      });
+      if (!response.ok) {
+        return { ok: false, error: `HTTP_${response.status}`, text: "" };
+      }
+      const contentType = (response.headers.get("content-type") || "").toLowerCase();
+      const raw = await response.text();
+      const text = contentType.includes("text/html") ? stripHtmlToText(raw) : (raw || "").trim();
+      if (!text) {
+        return { ok: false, error: "EMPTY_SOURCE_TEXT", text: "" };
+      }
+      return { ok: true, error: null, text };
+    } catch (_error) {
+      return { ok: false, error: "FETCH_FAILED", text: "" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function getSourceText(url) {
+    if (!url) {
+      return { ok: false, error: "EMPTY_URL", text: "" };
+    }
+    const cached = SOURCE_TEXT_CACHE.get(url);
+    if (cached && Date.now() - cached.savedAt <= MODULE_CACHE_TTL_MS) {
+      return { ok: true, error: null, text: cached.text };
+    }
+    const fetched = await fetchTextWithTimeout(url);
+    if (fetched.ok) {
+      SOURCE_TEXT_CACHE.set(url, {
+        text: fetched.text,
+        savedAt: Date.now()
+      });
+    }
+    return fetched;
+  }
+
+  function extractResponseOutputText(payload) {
+    if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+      return payload.output_text.trim();
+    }
+    const chunks = [];
+    for (const out of payload?.output || []) {
+      for (const c of out?.content || []) {
+        if (typeof c?.text === "string" && c.text.trim()) {
+          chunks.push(c.text.trim());
+        }
+      }
+    }
+    return chunks.join("\n").trim();
+  }
+
+  async function callOpenAIText({ apiKey, model, prompt, temperature = 0.1 }) {
+    if (!apiKey) {
+      return { ok: false, error: "AI_API_KEY_MISSING", text: "" };
+    }
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: model || DEFAULT_OPENAI_MODEL,
+          input: prompt,
+          temperature
+        })
+      });
+      if (!response.ok) {
+        return { ok: false, error: `AI_HTTP_${response.status}`, text: "" };
+      }
+      const payload = await response.json();
+      const text = extractResponseOutputText(payload);
+      if (!text) {
+        return { ok: false, error: "AI_EMPTY_OUTPUT", text: "" };
+      }
+      return { ok: true, error: null, text };
+    } catch (_error) {
+      return { ok: false, error: "AI_REQUEST_FAILED", text: "" };
+    }
+  }
+
+  async function translateWithAI({ apiKey, model, text, targetLanguage }) {
+    const value = (text || "").trim();
+    if (!value) {
+      return { ok: false, error: "EMPTY_TEXT", text: "" };
+    }
+    const key = `${targetLanguage}::${value}`;
+    const cached = AI_TRANSLATION_CACHE.get(key);
+    if (cached && Date.now() - cached.savedAt <= MODULE_CACHE_TTL_MS) {
+      return { ok: true, error: null, text: cached.text };
+    }
+
+    const prompt = [
+      "You are a translation engine.",
+      `Translate the following text to ${targetLanguage}.`,
+      "Only return the translated text, no extra explanation.",
+      "",
+      value
+    ].join("\n");
+    const translated = await callOpenAIText({ apiKey, model, prompt, temperature: 0 });
+    if (!translated.ok) {
+      return translated;
+    }
+    AI_TRANSLATION_CACHE.set(key, {
+      text: translated.text,
+      savedAt: Date.now()
+    });
+    return translated;
+  }
+
+  function safeParseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function explainWithAI({
+    apiKey,
+    model,
+    sourceLanguage,
+    translatedInputText,
+    score,
+    foundByRule,
+    evidenceSnippet
+  }) {
+    const prompt = [
+      "Return JSON only with keys: found, reason, aiExplanation.",
+      "found must be boolean and should align with evidence.",
+      "reason must be one of: FULL_SUBSTRING_MATCH, HIGH_TOKEN_OVERLAP, LOW_OVERLAP.",
+      "aiExplanation must be concise in Chinese.",
+      "",
+      `sourceLanguage: ${sourceLanguage}`,
+      `translatedInputText: ${translatedInputText}`,
+      `score: ${score}`,
+      `foundByRule: ${foundByRule}`,
+      `evidenceSnippet: ${evidenceSnippet}`
+    ].join("\n");
+    const result = await callOpenAIText({ apiKey, model, prompt, temperature: 0.1 });
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error,
+        data: {
+          found: foundByRule,
+          reason: foundByRule ? "HIGH_TOKEN_OVERLAP" : "LOW_OVERLAP",
+          aiExplanation: "AI 解释生成失败，已回退到规则判定。"
+        }
+      };
+    }
+
+    const data = safeParseJson(result.text);
+    if (!data || typeof data.found !== "boolean") {
+      return {
+        ok: false,
+        error: "AI_EXPLANATION_PARSE_FAILED",
+        data: {
+          found: foundByRule,
+          reason: foundByRule ? "HIGH_TOKEN_OVERLAP" : "LOW_OVERLAP",
+          aiExplanation: "AI 输出解析失败，已回退到规则判定。"
+        }
+      };
+    }
+    return { ok: true, error: null, data };
+  }
+
+  async function analyzeUrlTextMatch({
+    url,
+    inputText,
+    sourceText = "",
+    sourceLanguage = "unknown",
+    openAIApiKey = "",
+    openAIModel = DEFAULT_OPENAI_MODEL
+  }) {
+    const errors = [];
+    const valueUrl = (url || "").trim();
+    const valueInput = (inputText || "").trim();
+    if (!valueUrl || !valueInput) {
+      return {
+        ok: false,
+        errors: ["INVALID_INPUT"],
+        input: { url: valueUrl, inputText: valueInput }
+      };
+    }
+
+    let finalSourceText = (sourceText || "").trim();
+    let sourceFetchError = null;
+    if (!finalSourceText) {
+      const fetched = await getSourceText(valueUrl);
+      if (!fetched.ok) {
+        return {
+          ok: false,
+          errors: [fetched.error || "SOURCE_FETCH_FAILED"],
+          input: { url: valueUrl, inputText: valueInput }
+        };
+      }
+      finalSourceText = fetched.text;
+      sourceFetchError = fetched.error;
+    }
+
+    const finalSourceLanguage =
+      sourceLanguage && sourceLanguage !== "unknown"
+        ? sourceLanguage
+        : detectDominantLanguage(finalSourceText);
+    const inputLanguage = detectDominantLanguage(valueInput);
+    const targetLanguage = toTranslationTargetLanguage(finalSourceLanguage);
+
+    let translatedInputText = valueInput;
+    let translationApplied = false;
+    let translationOk = true;
+    let translationError = null;
+
+    if (
+      targetLanguage &&
+      inputLanguage !== "unknown" &&
+      finalSourceLanguage !== "unknown" &&
+      inputLanguage !== finalSourceLanguage
+    ) {
+      const translated = await translateWithAI({
+        apiKey: openAIApiKey,
+        model: openAIModel,
+        text: valueInput,
+        targetLanguage
+      });
+      if (!translated.ok) {
+        translationOk = false;
+        translationError = translated.error || "AI_TRANSLATION_FAILED";
+        errors.push(translationError);
+      } else {
+        translatedInputText = translated.text;
+        translationApplied = true;
+      }
+    }
+
+    const score = computeWindowContainmentScore(translatedInputText, finalSourceText);
+    const matchPercent = Math.round(score * 100);
+    const normalizedSource = normalizeText(finalSourceText);
+    const normalizedTranslated = normalizeText(translatedInputText);
+    const fullMatch =
+      normalizedSource && normalizedTranslated
+        ? normalizedSource.includes(normalizedTranslated)
+        : false;
+    const foundByRule = fullMatch || score >= 0.6;
+    const evidence = findEvidenceSnippet(finalSourceText, translatedInputText);
+
+    const aiExplanationResult = await explainWithAI({
+      apiKey: openAIApiKey,
+      model: openAIModel,
+      sourceLanguage: finalSourceLanguage,
+      translatedInputText,
+      score,
+      foundByRule,
+      evidenceSnippet: evidence.snippet
+    });
+    if (!aiExplanationResult.ok && aiExplanationResult.error) {
+      errors.push(aiExplanationResult.error);
+    }
+
+    const reason =
+      fullMatch
+        ? "FULL_SUBSTRING_MATCH"
+        : score >= 0.6
+          ? "HIGH_TOKEN_OVERLAP"
+          : "LOW_OVERLAP";
+
+    const explanationData = aiExplanationResult.data || {
+      found: foundByRule,
+      reason,
+      aiExplanation: "未生成 AI 解释。"
+    };
+
+    return {
+      ok: true,
+      input: {
+        url: valueUrl,
+        inputText: valueInput
+      },
+      intermediate: {
+        sourceText: finalSourceText,
+        sourceLanguage: finalSourceLanguage,
+        inputLanguage,
+        translatedInputText,
+        translationApplied
+      },
+      output: {
+        matchScore: score,
+        matchPercent,
+        explanation: {
+          found: typeof explanationData.found === "boolean" ? explanationData.found : foundByRule,
+          reason: explanationData.reason || reason,
+          evidenceSnippet: evidence.snippet,
+          evidenceStart: evidence.start,
+          evidenceEnd: evidence.end,
+          aiExplanation: explanationData.aiExplanation || ""
+        }
+      },
+      diagnostics: {
+        sourceFetchError,
+        translationOk,
+        translationError
+      },
+      errors
+    };
+  }
+
+  globalScope.UrlTextMatchModule = {
+    analyzeUrlTextMatch,
+    detectDominantLanguage,
+    normalizeText,
+    computeWindowContainmentScore
+  };
+})(self);
+
