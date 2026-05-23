@@ -138,7 +138,34 @@
         return { ok: false, error: `HTTP_${response.status}`, text: "" };
       }
       const contentType = (response.headers.get("content-type") || "").toLowerCase();
-      const raw = await response.text();
+      const buffer = await response.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let raw = "";
+      // 1) prefer declared charset
+      const charsetMatch = contentType.match(/charset=([^\s;]+)/i);
+      const declaredCharset = (charsetMatch?.[1] || "").trim().toLowerCase();
+      const tryDecode = (label) => {
+        try {
+          return new TextDecoder(label, { fatal: false }).decode(bytes);
+        } catch (_error) {
+          return "";
+        }
+      };
+      if (declaredCharset) {
+        raw = tryDecode(declaredCharset);
+      }
+      // 2) utf-8 default
+      if (!raw) {
+        raw = tryDecode("utf-8");
+      }
+      // 3) gb18030 fallback for CN pages with bad/missing charset
+      const brokenCount = (raw.match(/\uFFFD/g) || []).length;
+      if (!raw || brokenCount > 8) {
+        const gb = tryDecode("gb18030");
+        if (gb) {
+          raw = gb;
+        }
+      }
       const text = contentType.includes("text/html") ? stripHtmlToText(raw) : (raw || "").trim();
       if (!text) {
         return { ok: false, error: "EMPTY_SOURCE_TEXT", text: "" };

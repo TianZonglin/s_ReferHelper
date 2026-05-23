@@ -170,6 +170,20 @@ function getMatchedText(item) {
   return (item?.displayMatchText || item?.translatedClaimText || item?.claimText || "").trim();
 }
 
+function getAiLevelPercent(level) {
+  const value = String(level || "");
+  const mapping = {
+    "完全符合": 100,
+    "非常符合": 85,
+    "基本符合": 70,
+    "无法判断": 50,
+    "基本不符合": 30,
+    "非常不符合": 15,
+    "完全不符合": 0
+  };
+  return Object.prototype.hasOwnProperty.call(mapping, value) ? mapping[value] : 50;
+}
+
 function escapeRegExp(text) {
   return (text || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -193,11 +207,12 @@ function getLanguageDisplayName(lang) {
 function buildOperationArea(item) {
   const percent = getPossibilityPercent(item);
   const matchedHtml = buildHighlightedMatchHtml(item);
-  const translatedTag = item?.translationOk ? "\uff08\u7ffb\u8bd1\u540e\uff09" : "";
   const aiExplanation = item?.aiExplanation ? escapeHtml(item.aiExplanation) : "";
   const claimLang = getLanguageDisplayName(item?.claimLanguage);
   const sourceLang = getLanguageDisplayName(item?.sourceLanguage);
   const aiMatchLevel = String(item?.aiMatchLevel || item?.matchLevel || "\u65e0\u6cd5\u5224\u65ad");
+  const aiMatchPercent = getAiLevelPercent(aiMatchLevel);
+  const aiToneClass = aiMatchPercent > 50 ? "ai-tone-high" : aiMatchPercent === 50 ? "ai-tone-mid" : "ai-tone-low";
   const aiFound = typeof item?.aiExplanationFound === "boolean" ? item.aiExplanationFound : null;
   const aiReason = String(item?.aiExplanationReason || "");
   const aiLocation = String(item?.aiLocation || item?.location || "").trim();
@@ -213,31 +228,25 @@ function buildOperationArea(item) {
     translationNeeded && !item?.translationOk
       ? '<div class="claim-operation-text">翻译失败，已回退为原始引文文本</div>'
       : "";
-  const explanationHtml = aiExplanation ? `<div class="claim-ai-explanation">AI\u89e3\u91ca\uff1a${aiExplanation}</div>` : "";
+  const explanationHtml = aiExplanation ? `<div class="claim-ai-explanation"><span class="claim-ai-title">AI解释：</span>${aiExplanation}</div>` : "";
   const evidenceTitle =
     aiFound === true
       ? "关键支撑段落："
       : aiFound === false
         ? "不支撑原因："
         : "判断依据：";
-  const evidenceText = aiLocation || aiReason || "";
+  const evidenceText = (aiLocation || aiReason || "").replace(/\uFFFD+/g, "").trim();
   const evidenceHtml = evidenceText
-    ? `<div class="claim-operation-text claim-ai-evidence"><span class="claim-ai-evidence-label">${evidenceTitle}</span>${escapeHtml(evidenceText)}</div>`
+    ? `<div class="claim-operation-text claim-ai-evidence ${aiToneClass}"><span class="claim-ai-evidence-label">${evidenceTitle}</span>${escapeHtml(evidenceText)}</div>`
     : "";
   return `
   <div class="claim-operation-area">
-    <div class="claim-progress-row">
-      <span class="claim-progress-label">内容重合度：</span>
-      <div class="claim-progress-track">
-        <div class="claim-progress-fill" style="width:${percent}%;"></div>
-      </div>
-      <span class="claim-progress-text">${percent}%</span>
-    </div>
+    <div class="claim-operation-text claim-overlap-text">内容重合度：${percent}%</div>
     <div class="claim-operation-text">\u5f15\u6587\u8bed\u8a00\uff1a${escapeHtml(claimLang)}</div>
     <div class="claim-operation-text">\u539f\u6587\u8bed\u8a00\uff1a${escapeHtml(sourceLang)}</div>
-    <div class="claim-operation-text">\u5339\u914d\u6587\u672c${translatedTag}\uff1a${matchedHtml}</div>
+    <div class="claim-operation-text">核查文本（已对齐）：${matchedHtml}</div>
     ${translationFailedHint}
-    <div class="claim-operation-text">AI判断结论：${escapeHtml(aiMatchLevel)}</div>
+    <div class="claim-operation-text claim-ai-conclusion ${aiToneClass}"><span class="claim-ai-title">AI判断结论：</span><span class="claim-ai-conclusion-value">${escapeHtml(aiMatchLevel)}（${aiMatchPercent}%）</span></div>
     ${evidenceHtml}
     ${explanationHtml}
   </div>`;
@@ -289,11 +298,28 @@ function renderClaimList(claims, meta = {}) {
     .map((item, index) => {
       const summary = item.claimText || "";
       const refLabel = resolveRefLabel(item);
-      const statusLabel = item.checkLabel || "待核查";
-      const statusClass = item.checkClass || "status-pending-check";
+      const aiLevel = String(item?.aiMatchLevel || item?.matchLevel || "").trim();
+      const aiPct = aiLevel ? getAiLevelPercent(aiLevel) : null;
+      const aiDone = aiLevel.length > 0;
+      let statusLabel = item.checkLabel || "待核查";
+      let statusClass = item.checkClass || "status-pending-check";
+      let rowToneClass = "";
+      if (aiDone && Number.isFinite(aiPct)) {
+        statusLabel = "核查完毕";
+        if (aiPct > 50) {
+          statusClass = "status-checked-high";
+          rowToneClass = "claim-row-tone-high";
+        } else if (aiPct === 50) {
+          statusClass = "status-checked-mid";
+          rowToneClass = "claim-row-tone-mid";
+        } else {
+          statusClass = "status-checked-low";
+          rowToneClass = "claim-row-tone-low";
+        }
+      }
       const isOpen = index === expandedClaimIndex;
       const isSelected = index === selectedClaimIndex;
-      return `<li class="claim-row${isSelected ? " is-selected" : ""}${isOpen ? " is-open" : ""}" data-claim-index="${index}" tabindex="0">
+      return `<li class="claim-row${rowToneClass ? ` ${rowToneClass}` : ""}${isSelected ? " is-selected" : ""}${isOpen ? " is-open" : ""}" data-claim-index="${index}" tabindex="0">
   <div class="claim-main">${escapeHtml(summary)}</div>
   <div class="claim-meta">
     <span class="claim-domain">${escapeHtml(refLabel)}</span>

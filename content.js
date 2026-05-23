@@ -422,15 +422,23 @@ function highlightAndScrollToElement(element) {
     return false;
   }
 
+  const stateKey = "__refHelperHighlightState";
+  const prevState = window[stateKey];
+  if (prevState?.element && prevState.element !== element) {
+    prevState.element.style.outline = prevState.previousOutline || "";
+    prevState.element.style.transition = prevState.previousTransition || "";
+  }
+
   element.scrollIntoView({ behavior: "smooth", block: "center" });
   const previousOutline = element.style.outline;
   const previousTransition = element.style.transition;
   element.style.transition = "outline 0.2s ease";
   element.style.outline = "3px solid #f59e0b";
-  window.setTimeout(() => {
-    element.style.outline = previousOutline;
-    element.style.transition = previousTransition;
-  }, 2000);
+  window[stateKey] = {
+    element,
+    previousOutline,
+    previousTransition
+  };
   return true;
 }
 

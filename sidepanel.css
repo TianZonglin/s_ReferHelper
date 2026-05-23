@@ -143,7 +143,7 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
-  background: #fcfdff;
+  background: #ffffff;
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -154,6 +154,21 @@ h1 {
   transform: translateY(-1px);
 }
 
+.claim-row.claim-row-tone-high:hover {
+  border-color: #86efac;
+  box-shadow: 0 4px 14px rgba(22, 101, 52, 0.12);
+}
+
+.claim-row.claim-row-tone-mid:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 4px 14px rgba(55, 65, 81, 0.10);
+}
+
+.claim-row.claim-row-tone-low:hover {
+  border-color: #fecaca;
+  box-shadow: 0 4px 14px rgba(153, 27, 27, 0.12);
+}
+
 .claim-row.is-selected {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.14);
@@ -161,6 +176,36 @@ h1 {
 
 .claim-row.is-open {
   background: #f8fbff;
+}
+
+.claim-row.claim-row-tone-high {
+  background: rgba(220, 252, 231, 0.3);
+  border-color: #86efac;
+}
+
+.claim-row.claim-row-tone-mid {
+  background: rgba(243, 244, 246, 0.3);
+  border-color: #d1d5db;
+}
+
+.claim-row.claim-row-tone-low {
+  background: rgba(254, 226, 226, 0.3);
+  border-color: #fecaca;
+}
+
+.claim-row.claim-row-tone-high.is-selected {
+  border-color: #166534;
+  box-shadow: 0 0 0 2px rgba(22, 101, 52, 0.22);
+}
+
+.claim-row.claim-row-tone-mid.is-selected {
+  border-color: #374151;
+  box-shadow: 0 0 0 2px rgba(55, 65, 81, 0.18);
+}
+
+.claim-row.claim-row-tone-low.is-selected {
+  border-color: #991b1b;
+  box-shadow: 0 0 0 2px rgba(153, 27, 27, 0.22);
 }
 
 .claim-main {
@@ -200,6 +245,24 @@ h1 {
   color: #8a4b08;
   background: #fff3d6;
   border-color: #f4cd85;
+}
+
+.claim-check-btn.status-checked-high {
+  color: #166534;
+  background: #bbf7d0;
+  border-color: #86efac;
+}
+
+.claim-check-btn.status-checked-mid {
+  color: #374151;
+  background: #e5e7eb;
+  border-color: #d1d5db;
+}
+
+.claim-check-btn.status-checked-low {
+  color: #991b1b;
+  background: #fecaca;
+  border-color: #fecaca;
 }
 
 .claim-operation-area {
@@ -251,15 +314,21 @@ h1 {
   word-break: break-word;
 }
 
+.claim-overlap-text {
+  font-weight: 400;
+  color: #0f172a;
+  margin-bottom: 6px;
+}
+
 .claim-operation-text::before {
   content: "";
 }
 
 .claim-operation-hit {
-  background: #fde047;
-  color: #111827;
-  border-radius: 3px;
-  padding: 0 2px;
+  background: transparent;
+  color: inherit;
+  border-radius: 0;
+  padding: 0;
 }
 
 .claim-ai-explanation {
@@ -269,16 +338,57 @@ h1 {
   line-height: 1.45;
 }
 
+.claim-ai-title {
+  font-weight: 700;
+}
+
+.claim-ai-conclusion {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.claim-ai-conclusion-value {
+  font-weight: 700;
+}
+
+.claim-ai-conclusion.ai-tone-high .claim-ai-conclusion-value {
+  color: #166534;
+}
+
+.claim-ai-conclusion.ai-tone-mid .claim-ai-conclusion-value {
+  color: #374151;
+}
+
+.claim-ai-conclusion.ai-tone-low .claim-ai-conclusion-value {
+  color: #991b1b;
+}
+
 .claim-ai-evidence {
   margin-top: 6px;
   padding: 6px 8px;
   border-radius: 6px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
+  background: transparent;
+  border: 1px solid transparent;
 }
 
 .claim-ai-evidence-label {
   color: #0f172a;
   font-weight: 600;
   margin-right: 4px;
+}
+
+.claim-ai-evidence.ai-tone-high {
+  background: rgba(187, 247, 208, 0.85);
+  border-color: rgba(134, 239, 172, 0.6);
+}
+
+.claim-ai-evidence.ai-tone-mid {
+  background: rgba(229, 231, 235, 0.85);
+  border-color: rgba(209, 213, 219, 0.6);
+}
+
+.claim-ai-evidence.ai-tone-low {
+  background: rgba(254, 202, 202, 0.85);
+  border-color: rgba(254, 202, 202, 0.7);
 }
