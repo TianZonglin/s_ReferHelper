@@ -31,6 +31,61 @@
     return normalized.split(/\s+/).filter(Boolean);
   }
 
+  const EN_STOPWORDS = new Set([
+    "a", "an", "the", "and", "or", "but", "if", "then", "else", "when", "while",
+    "of", "to", "in", "on", "at", "by", "for", "with", "from", "as", "is", "are",
+    "was", "were", "be", "been", "being", "it", "its", "this", "that", "these",
+    "those", "i", "you", "he", "she", "we", "they", "them", "my", "your", "his",
+    "her", "our", "their", "me", "him", "us", "do", "does", "did", "done", "can",
+    "could", "will", "would", "should", "may", "might", "must", "not", "no", "yes",
+    "have", "has", "had", "about", "into", "over", "under", "between", "than",
+    "also", "very", "more", "most", "such", "any", "all", "some", "each", "other"
+  ]);
+
+  const ZH_STOPWORDS = new Set([
+    "的", "了", "和", "与", "及", "并", "且", "或", "而", "但", "如果", "那么", "因为", "所以",
+    "就是", "也是", "一个", "一种", "一些", "这个", "那个", "这些", "那些", "我们", "你们", "他们",
+    "是否", "以及", "进行", "可以", "需要", "已经", "没有", "不是", "通过", "对于", "关于", "其中",
+    "并且", "同时", "然后", "可能", "相关", "内容", "部分"
+  ]);
+
+  function isMeaningfulToken(token) {
+    const t = String(token || "").trim().toLowerCase();
+    if (!t) return false;
+    if (/^\d+$/.test(t)) return false;
+    if (EN_STOPWORDS.has(t) || ZH_STOPWORDS.has(t)) return false;
+    if (/^[a-z]$/.test(t)) return false;
+    if (/^[\u4e00-\u9fff]$/.test(t)) return false;
+    return true;
+  }
+
+  function tokenizeForReproduction(text) {
+    const value = normalizeText(text || "");
+    if (!value) return [];
+    const tokens = [];
+
+    // English / alnum tokens
+    const enTokens = value.match(/[a-z0-9]+/g) || [];
+    for (const t of enTokens) {
+      tokens.push(t);
+    }
+
+    // Chinese tokens: use bigrams + unigrams fallback to avoid "whole sentence as one token"
+    const hanSeqList = value.match(/[\u4e00-\u9fff]+/g) || [];
+    for (const seq of hanSeqList) {
+      if (seq.length === 1) {
+        tokens.push(seq);
+        continue;
+      }
+      for (let i = 0; i < seq.length - 1; i += 1) {
+        tokens.push(seq.slice(i, i + 2));
+      }
+      tokens.push(seq);
+    }
+
+    return tokens.filter(isMeaningfulToken);
+  }
+
   function detectDominantLanguage(text) {
     const value = (text || "").trim();
     if (!value) {
@@ -96,6 +151,27 @@
       }
     }
     return bestScore;
+  }
+
+  function computeTokenReproductionRate(claimText, sourceText) {
+    const claimTokens = tokenizeForReproduction(claimText || "");
+    const sourceTokenSet = new Set(tokenizeForReproduction(sourceText || ""));
+    if (!claimTokens.length || !sourceTokenSet.size) {
+      return { rate: 0, percent: 0, matched: 0, total: claimTokens.length || 0 };
+    }
+    let matched = 0;
+    for (const token of claimTokens) {
+      if (sourceTokenSet.has(token)) {
+        matched += 1;
+      }
+    }
+    const rate = matched / claimTokens.length;
+    return {
+      rate,
+      percent: Math.round(rate * 100),
+      matched,
+      total: claimTokens.length
+    };
   }
 
   function findEvidenceSnippet(sourceText, queryText) {
@@ -371,8 +447,11 @@
       "2) The task is not literal substring matching. Judge semantic involvement and direct support.",
       "3) If found=true, location must be the key source segment that directly supports claimText, preferably a short verbatim quote from sourceText.",
       "4) If found=false, location must be empty string and reason must explain why sourceText does not directly support claimText.",
-      "5) aiExplanation must be concise Chinese.",
-      "6) matchLevel must be exactly one of:",
+      "5) reason must be Chinese explanation text (not code, not enum).",
+      "6) aiExplanation must be concise Chinese.",
+      "7) location must be Chinese description when found=true.",
+      "8) If found=false, reason should clearly mention mismatch or missing support in sourceText.",
+      "9) matchLevel must be exactly one of:",
       "完全符合, 非常符合, 基本符合, 无法判断, 基本不符合, 非常不符合, 完全不符合."
     ].join(" ");
     const result = await callOpenAIText({
@@ -496,6 +575,7 @@
 
     const score = computeWindowContainmentScore(translatedInputText, finalSourceText);
     const matchPercent = Math.round(score * 100);
+    const tokenReproduction = computeTokenReproductionRate(translatedInputText, finalSourceText);
     const normalizedSource = normalizeText(finalSourceText);
     const normalizedTranslated = normalizeText(translatedInputText);
     const fullMatch =
@@ -548,6 +628,7 @@
       output: {
         matchScore: score,
         matchPercent,
+        tokenReproduction,
         explanation: {
           found: typeof explanationData.found === "boolean" ? explanationData.found : foundByRule,
           reason: explanationData.reason || ruleReason,
@@ -574,6 +655,7 @@
     getSourceText,
     detectDominantLanguage,
     normalizeText,
-    computeWindowContainmentScore
+    computeWindowContainmentScore,
+    computeTokenReproductionRate
   };
 })(self);

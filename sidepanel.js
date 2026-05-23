@@ -201,6 +201,7 @@ function getLanguageDisplayName(lang) {
 
 function buildOperationArea(item, index) {
   const percent = getPossibilityPercent(item);
+  const tokenReproductionPercent = Math.max(0, Math.min(100, Math.round(Number(item?.tokenReproductionPercent || 0))));
   const matchedHtml = buildHighlightedMatchHtml(item);
   const aiExplanation = item?.aiExplanation ? escapeHtml(item.aiExplanation) : "";
   const claimLang = getLanguageDisplayName(item?.claimLanguage);
@@ -232,7 +233,7 @@ function buildOperationArea(item, index) {
         : "判断依据：";
   const evidenceText = (aiLocation || aiReason || "").replace(/\uFFFD+/g, "").trim();
   const evidenceLinkHtml =
-    evidenceText && item?.url
+    evidenceText && item?.url && aiFound === true
       ? ` <button type="button" class="claim-evidence-link" data-action="open-source-link" data-claim-index="${index}" title="打开原文并定位"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" aria-hidden="true" focusable="false"><path d="M320 576C461.4 576 576 461.4 576 320C576 178.6 461.4 64 320 64C178.6 64 64 178.6 64 320C64 461.4 178.6 576 320 576zM288 224C288 206.3 302.3 192 320 192C337.7 192 352 206.3 352 224C352 241.7 337.7 256 320 256C302.3 256 288 241.7 288 224zM280 288L328 288C341.3 288 352 298.7 352 312L352 400L360 400C373.3 400 384 410.7 384 424C384 437.3 373.3 448 360 448L280 448C266.7 448 256 437.3 256 424C256 410.7 266.7 400 280 400L304 400L304 336L280 336C266.7 336 256 325.3 256 312C256 298.7 266.7 288 280 288z"/></svg></button>`
       : "";
   const evidenceHtml = evidenceText
@@ -240,10 +241,12 @@ function buildOperationArea(item, index) {
     : "";
   return `
   <div class="claim-operation-area">
-    <div class="claim-operation-text claim-overlap-text">内容重合度：${percent}%</div>
     <div class="claim-operation-text">\u5f15\u6587\u8bed\u8a00\uff1a${escapeHtml(claimLang)}</div>
     <div class="claim-operation-text">\u539f\u6587\u8bed\u8a00\uff1a${escapeHtml(sourceLang)}</div>
     <div class="claim-operation-text">核查文本（已对齐）：${matchedHtml}</div>
+    <div class="claim-operation-separator"></div>
+    <div class="claim-operation-text claim-overlap-text">内容重合度：${percent}%</div>
+    <div class="claim-operation-text claim-overlap-text">分词复现率：${tokenReproductionPercent}%</div>
     ${translationFailedHint}
     <div class="claim-operation-text claim-ai-conclusion ${aiToneClass}"><span class="claim-ai-title">AI判断结论：</span><span class="claim-ai-conclusion-value">${escapeHtml(aiMatchLevel)}（${aiMatchPercent}%）</span></div>
     ${evidenceHtml}

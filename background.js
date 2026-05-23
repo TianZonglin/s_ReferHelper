@@ -103,6 +103,7 @@ async function evaluateClaimsByUrl(claims) {
       translationOk: result.intermediate.translationApplied,
       translationTargetLanguage: result.intermediate.sourceLanguage,
       translationError: null,
+      tokenReproductionPercent: Number(result.output?.tokenReproduction?.percent || 0),
       aiExplanation: result.output.explanation?.aiExplanation || "",
       aiMatchLevel: result.output.explanation?.matchLevel || "无法判断",
       aiLocation: result.output.explanation?.location || "",
@@ -274,6 +275,7 @@ async function evaluateClaimsByUrlAsync(claims, progressCallback) {
 
     item.possibilityScore = analysis.output.matchScore;
     item.checkLabel = `待核查 ${analysis.output.matchPercent}%`;
+    item.tokenReproductionPercent = Number(analysis.output?.tokenReproduction?.percent || 0);
     item.sourceFetchOk = true;
     item.sourceFetchError = null;
     item.sourceLanguage = analysis.intermediate.sourceLanguage;
