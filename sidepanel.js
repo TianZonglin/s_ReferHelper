@@ -13,8 +13,8 @@ let scanProgress = {
   align: { total: 0, completed: 0, running: false },
   eval: { total: 0, completed: 0, running: false }
 };
-const SCAN_BTN_IDLE_TEXT = "扫描当前回答";
-const SCAN_BTN_BUSY_TEXT = "扫描当前回答（正在解析中...）";
+const SCAN_BTN_IDLE_TEXT = "扫描当前问答";
+const SCAN_BTN_BUSY_TEXT = "扫描当前问答（正在解析中...）";
 
 function setScanButtonBusy(busy) {
   if (!scanBtn) return;
@@ -29,9 +29,9 @@ function formatPlatformLabel(status) {
 }
 
 function setDetectingState() {
-  platformStatus.textContent = "平台状态：检测中";
-  containerStatus.textContent = "回答容器：检测中";
-  classStatus.textContent = "问答Class：检测中";
+  platformStatus.innerHTML = '平台识别：<span class="platform-badge">检测中</span>';
+  containerStatus.textContent = "问答容器：检测中";
+  classStatus.textContent = "选择器：检测中";
 }
 
 async function refreshPlatformStatus() {
@@ -40,9 +40,9 @@ async function refreshPlatformStatus() {
     const response = await chrome.runtime.sendMessage({ type: "GET_PLATFORM_STATUS" });
     if (!response?.ok) {
       latestPlatformData = null;
-      platformStatus.textContent = "平台状态：未支持";
-      containerStatus.textContent = "回答容器：无法检测";
-      classStatus.textContent = "问答Class：无法检测";
+      platformStatus.innerHTML = '平台识别：<span class="platform-badge">未支持</span>';
+      containerStatus.textContent = "问答容器：无法检测";
+      classStatus.textContent = "选择器：无法检测";
       renderErrorBlock("平台检测失败", {
         error: response?.error || "UNKNOWN_ERROR",
         details: response?.details || null
@@ -52,33 +52,28 @@ async function refreshPlatformStatus() {
 
     const data = response.data || {};
     latestPlatformData = data;
-    platformStatus.textContent = `平台状态：${formatPlatformLabel(data.platform)}`;
-    containerStatus.textContent = `回答容器：${data.answerContainerFound ? "已找到" : "未找到"}`;
-    if (data.domainMatched) {
-      const questionTag = data.questionContainerFound ? "问已找到" : "问未找到";
-      const answerTag = data.answerContainerFound ? "答已找到" : "答未找到";
-      const refTag = data.refSelector ? `；Ref=${data.refSelector} [${data.refTextAttr || "text"}]` : "";
-      const excludeTag = data.excludeClass ? `；Exclude=.${data.excludeClass}` : "";
-      const latestTag = data.scanLatestAnswerOnly ? "；Scope=latest-answer" : "；Scope=all-answers";
-      classStatus.textContent = `问答Class：${data.questionClass} / ${data.answerClass}（${questionTag}，${answerTag}）${refTag}${excludeTag}${latestTag}`;
-    } else {
-      classStatus.textContent = "问答Class：未匹配到配置域名";
-    }
+    platformStatus.innerHTML = `平台识别：<span class="platform-badge">${escapeHtml(formatPlatformLabel(data.platform))}</span>`;
+    const questionTag = data.questionContainerFound ? "问已找到 ✓" : "问未找到";
+    const answerTag = data.answerContainerFound ? "答已找到 ✓" : "答未找到";
+    const containerFound = data.answerContainerFound ? "已找到" : "未找到";
+    containerStatus.textContent = `问答容器：${containerFound}（${questionTag}，${answerTag}）`;
+    classStatus.textContent =
+      "选择器：Chat = .chat-content-item-user / .chat-content-item-assistant；Ref = .pua-ref-renderer--cite [text]；Exclude = .toolcall-container；Scope = latest-answer";
 
     if (data.platform === "doubao") {
       results.textContent = "豆包适配器已预留，后续步骤接入。";
     } else if (data.platform === "unsupported") {
       results.textContent = "当前页面不在 Kimi/豆包 范围内。";
     } else if (data.platform === "kimi" && data.answerContainerFound) {
-      results.textContent = "Kimi 页面检测通过，可进入 Step 3。";
+      results.textContent = "Kimi 页面检测通过，可点击扫描当前问答进行分析。";
     } else {
       results.textContent = "识别为 Kimi，但尚未定位到回答容器。";
     }
   } catch (_error) {
     latestPlatformData = null;
-    platformStatus.textContent = "平台状态：未支持";
-    containerStatus.textContent = "回答容器：无法检测";
-    classStatus.textContent = "问答Class：无法检测";
+    platformStatus.innerHTML = '平台识别：<span class="platform-badge">未支持</span>';
+    containerStatus.textContent = "问答容器：无法检测";
+    classStatus.textContent = "选择器：无法检测";
     renderErrorBlock("平台检测失败", {
       error: "RUNTIME_EXCEPTION",
       details: {

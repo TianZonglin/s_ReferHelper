@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -8,17 +8,20 @@
   </head>
   <body>
     <main class="panel">
-      <h1>引用一致性核查</h1>
       <section class="status-area" aria-label="平台状态">
-        <p id="platform-status">平台状态：检测中</p>
-        <p id="container-status">回答容器：检测中</p>
-        <p id="class-status">问答Class：检测中</p>
+        <p id="platform-status">平台识别：检测中</p>
+        <p id="container-status">问答容器：检测中</p>
+        <p id="class-status">选择器：检测中</p>
+        <div class="status-separator"></div>
+        <button id="scan-btn" type="button">扫描当前问答</button>
       </section>
-      <button id="scan-btn" type="button">扫描当前回答</button>
       <section class="result-area" aria-label="结果区">
         <h2>结果区</h2>
         <div id="results"></div>
       </section>
+      <p class="panel-desc">
+        <b>插件说明：</b><br />本插件可以快速核验您同AI的对话中涉及的引用是否真实可靠。如果AI回答中的引用部分真实可信，则结果会呈现淡绿色，并且点击核查完毕按钮后会显示直接支撑段落；如果引用部分同引文出处内容并不匹配，则呈现淡红色，且打开详细内容会告知不匹配的原因
+      </p>
     </main>
     <script src="sidepanel.js"></script>
   </body>
