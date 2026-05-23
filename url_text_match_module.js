@@ -322,33 +322,50 @@
     apiKey,
     model,
     sourceLanguage,
+    sourceText,
     translatedInputText,
-    score,
-    foundByRule,
-    evidenceSnippet,
     baseUrl = DEFAULT_OPENAI_BASE_URL
   }) {
-    const prompt = [
-      "Return JSON only with keys: found, reason, aiExplanation.",
-      "found must be boolean and should align with evidence.",
-      "reason must be one of: FULL_SUBSTRING_MATCH, HIGH_TOKEN_OVERLAP, LOW_OVERLAP.",
-      "aiExplanation must be concise in Chinese.",
-      "",
-      `sourceLanguage: ${sourceLanguage}`,
-      `translatedInputText: ${translatedInputText}`,
-      `score: ${score}`,
-      `foundByRule: ${foundByRule}`,
-      `evidenceSnippet: ${evidenceSnippet}`
-    ].join("\n");
-    const result = await callOpenAIText({ apiKey, model, prompt, temperature: 0.1, baseUrl });
+    const maxSourceChars = 30000;
+    const trimmedSourceText = String(sourceText || "").slice(0, maxSourceChars);
+    const prompt = JSON.stringify({
+      sourceLanguage,
+      claimText: translatedInputText,
+      sourceText: trimmedSourceText,
+      note: "Judge whether sourceText contains content that directly supports claimText. If yes, return the key supporting segment from sourceText; if no, explain why."
+    });
+    const systemPrompt = [
+      "You are a precise fact-checking assistant.",
+      "Return valid JSON only.",
+      "Schema:",
+      "{\"found\":boolean,\"location\":\"string\",\"reason\":\"string\",\"aiExplanation\":\"string\",\"matchLevel\":\"string\"}.",
+      "Rules:",
+      "1) Decide from sourceText content only, do not use external knowledge.",
+      "2) The task is not literal substring matching. Judge semantic involvement and direct support.",
+      "3) If found=true, location must be the key source segment that directly supports claimText, preferably a short verbatim quote from sourceText.",
+      "4) If found=false, location must be empty string and reason must explain why sourceText does not directly support claimText.",
+      "5) aiExplanation must be concise Chinese.",
+      "6) matchLevel must be exactly one of:",
+      "完全符合, 非常符合, 基本符合, 无法判断, 基本不符合, 非常不符合, 完全不符合."
+    ].join(" ");
+    const result = await callOpenAIText({
+      apiKey,
+      model,
+      prompt,
+      temperature: 0.1,
+      baseUrl,
+      systemPrompt
+    });
     if (!result.ok) {
       return {
         ok: false,
         error: result.error,
         data: {
-          found: foundByRule,
-          reason: foundByRule ? "HIGH_TOKEN_OVERLAP" : "LOW_OVERLAP",
-          aiExplanation: "AI 解释生成失败，已回退到规则判定。"
+          found: false,
+          location: "",
+          reason: "AI_REQUEST_FAILED",
+          aiExplanation: "AI 解释生成失败，已回退到规则判定。",
+          matchLevel: "无法判断"
         }
       };
     }
@@ -359,13 +376,25 @@
         ok: false,
         error: "AI_EXPLANATION_PARSE_FAILED",
         data: {
-          found: foundByRule,
-          reason: foundByRule ? "HIGH_TOKEN_OVERLAP" : "LOW_OVERLAP",
-          aiExplanation: "AI 输出解析失败，已回退到规则判定。"
+          found: false,
+          location: "",
+          reason: "AI_EXPLANATION_PARSE_FAILED",
+          aiExplanation: "AI 输出解析失败，已回退到规则判定。",
+          matchLevel: "无法判断"
         }
       };
     }
-    return { ok: true, error: null, data };
+    return {
+      ok: true,
+      error: null,
+      data: {
+        found: !!data.found,
+        location: String(data.location || ""),
+        reason: String(data.reason || ""),
+        aiExplanation: String(data.aiExplanation || ""),
+        matchLevel: String(data.matchLevel || "无法判断")
+      }
+    };
   }
 
   async function analyzeUrlTextMatch({
@@ -453,17 +482,15 @@
       apiKey: openAIApiKey,
       model: openAIModel,
       sourceLanguage: finalSourceLanguage,
+      sourceText: finalSourceText,
       translatedInputText,
-      score,
-      foundByRule,
-      evidenceSnippet: evidence.snippet,
       baseUrl: openAIBaseUrl
     });
     if (!aiExplanationResult.ok && aiExplanationResult.error) {
       errors.push(aiExplanationResult.error);
     }
 
-    const reason =
+    const ruleReason =
       fullMatch
         ? "FULL_SUBSTRING_MATCH"
         : score >= 0.6
@@ -472,8 +499,10 @@
 
     const explanationData = aiExplanationResult.data || {
       found: foundByRule,
-      reason,
-      aiExplanation: "未生成 AI 解释。"
+      location: evidence.snippet ? "rule-snippet" : "",
+      reason: ruleReason,
+      aiExplanation: "未生成 AI 解释。",
+      matchLevel: "无法判断"
     };
 
     return {
@@ -494,7 +523,9 @@
         matchPercent,
         explanation: {
           found: typeof explanationData.found === "boolean" ? explanationData.found : foundByRule,
-          reason: explanationData.reason || reason,
+          reason: explanationData.reason || ruleReason,
+          location: explanationData.location || "",
+          matchLevel: explanationData.matchLevel || "无法判断",
           evidenceSnippet: evidence.snippet,
           evidenceStart: evidence.start,
           evidenceEnd: evidence.end,

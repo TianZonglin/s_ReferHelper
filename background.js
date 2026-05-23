@@ -104,6 +104,8 @@ async function evaluateClaimsByUrl(claims) {
       translationTargetLanguage: result.intermediate.sourceLanguage,
       translationError: null,
       aiExplanation: result.output.explanation?.aiExplanation || "",
+      aiMatchLevel: result.output.explanation?.matchLevel || "无法判断",
+      aiLocation: result.output.explanation?.location || "",
       aiEvidenceSnippet: result.output.explanation?.evidenceSnippet || "",
       aiExplanationFound: !!result.output.explanation?.found,
       aiExplanationReason: result.output.explanation?.reason || ""
@@ -277,6 +279,8 @@ async function evaluateClaimsByUrlAsync(claims, progressCallback) {
     item.sourceLanguage = analysis.intermediate.sourceLanguage;
     item.claimLanguage = analysis.intermediate.inputLanguage;
     item.aiExplanation = analysis.output.explanation?.aiExplanation || "";
+    item.aiMatchLevel = analysis.output.explanation?.matchLevel || "无法判断";
+    item.aiLocation = analysis.output.explanation?.location || "";
     item.aiEvidenceSnippet = analysis.output.explanation?.evidenceSnippet || "";
     item.aiExplanationFound = !!analysis.output.explanation?.found;
     item.aiExplanationReason = analysis.output.explanation?.reason || "";

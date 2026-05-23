@@ -37,6 +37,12 @@ h1 {
   cursor: pointer;
 }
 
+#scan-btn:disabled {
+  background: #9ca3af;
+  color: #f3f4f6;
+  cursor: not-allowed;
+}
+
 .status-area {
   margin: 0 0 12px;
   background: var(--card);
@@ -209,6 +215,12 @@ h1 {
   margin-bottom: 8px;
 }
 
+.claim-progress-label {
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
 .claim-progress-track {
   flex: 1;
   position: relative;
@@ -255,4 +267,18 @@ h1 {
   font-size: 12px;
   color: #334155;
   line-height: 1.45;
+}
+
+.claim-ai-evidence {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.claim-ai-evidence-label {
+  color: #0f172a;
+  font-weight: 600;
+  margin-right: 4px;
 }

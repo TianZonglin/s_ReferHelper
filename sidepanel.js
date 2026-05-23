@@ -8,10 +8,19 @@ let latestPlatformData = null;
 let latestClaims = [];
 let selectedClaimIndex = null;
 let expandedClaimIndex = null;
+let isScanning = false;
 let scanProgress = {
   align: { total: 0, completed: 0, running: false },
   eval: { total: 0, completed: 0, running: false }
 };
+const SCAN_BTN_IDLE_TEXT = "扫描当前回答";
+const SCAN_BTN_BUSY_TEXT = "扫描当前回答（正在解析中...）";
+
+function setScanButtonBusy(busy) {
+  if (!scanBtn) return;
+  scanBtn.disabled = !!busy;
+  scanBtn.textContent = busy ? SCAN_BTN_BUSY_TEXT : SCAN_BTN_IDLE_TEXT;
+}
 
 function formatPlatformLabel(status) {
   if (status === "kimi") return "Kimi";
@@ -188,6 +197,10 @@ function buildOperationArea(item) {
   const aiExplanation = item?.aiExplanation ? escapeHtml(item.aiExplanation) : "";
   const claimLang = getLanguageDisplayName(item?.claimLanguage);
   const sourceLang = getLanguageDisplayName(item?.sourceLanguage);
+  const aiMatchLevel = String(item?.aiMatchLevel || item?.matchLevel || "\u65e0\u6cd5\u5224\u65ad");
+  const aiFound = typeof item?.aiExplanationFound === "boolean" ? item.aiExplanationFound : null;
+  const aiReason = String(item?.aiExplanationReason || "");
+  const aiLocation = String(item?.aiLocation || item?.location || "").trim();
   const rawClaimLang = String(item?.claimLanguage || "").trim().toLowerCase();
   const rawSourceLang = String(item?.sourceLanguage || "").trim().toLowerCase();
   const translationNeeded =
@@ -201,9 +214,20 @@ function buildOperationArea(item) {
       ? '<div class="claim-operation-text">翻译失败，已回退为原始引文文本</div>'
       : "";
   const explanationHtml = aiExplanation ? `<div class="claim-ai-explanation">AI\u89e3\u91ca\uff1a${aiExplanation}</div>` : "";
+  const evidenceTitle =
+    aiFound === true
+      ? "关键支撑段落："
+      : aiFound === false
+        ? "不支撑原因："
+        : "判断依据：";
+  const evidenceText = aiLocation || aiReason || "";
+  const evidenceHtml = evidenceText
+    ? `<div class="claim-operation-text claim-ai-evidence"><span class="claim-ai-evidence-label">${evidenceTitle}</span>${escapeHtml(evidenceText)}</div>`
+    : "";
   return `
   <div class="claim-operation-area">
     <div class="claim-progress-row">
+      <span class="claim-progress-label">内容重合度：</span>
       <div class="claim-progress-track">
         <div class="claim-progress-fill" style="width:${percent}%;"></div>
       </div>
@@ -213,6 +237,8 @@ function buildOperationArea(item) {
     <div class="claim-operation-text">\u539f\u6587\u8bed\u8a00\uff1a${escapeHtml(sourceLang)}</div>
     <div class="claim-operation-text">\u5339\u914d\u6587\u672c${translatedTag}\uff1a${matchedHtml}</div>
     ${translationFailedHint}
+    <div class="claim-operation-text">AI判断结论：${escapeHtml(aiMatchLevel)}</div>
+    ${evidenceHtml}
     ${explanationHtml}
   </div>`;
 }
@@ -334,10 +360,15 @@ function attachClaimItemEvents() {
 }
 
 async function scanClaims() {
+  if (isScanning) return;
+  isScanning = true;
+  setScanButtonBusy(true);
   results.textContent = "正在扫描当前回答...";
   try {
     const response = await chrome.runtime.sendMessage({ type: "SCAN_CLAIMS" });
     if (!response?.ok) {
+      isScanning = false;
+      setScanButtonBusy(false);
       renderErrorBlock("扫描失败", {
         error: response?.error || "UNKNOWN_ERROR",
         details: response?.details || null
@@ -352,6 +383,8 @@ async function scanClaims() {
     renderStatusProgress();
     renderClaimList(response.claims || [], response);
   } catch (_error) {
+    isScanning = false;
+    setScanButtonBusy(false);
     renderErrorBlock("扫描失败", {
       error: "RUNTIME_EXCEPTION",
       details: {
@@ -367,6 +400,7 @@ scanBtn?.addEventListener("click", async () => {
   await scanClaims();
 });
 
+setScanButtonBusy(false);
 refreshPlatformStatus();
 renderStatusProgress();
 
@@ -389,6 +423,8 @@ chrome.runtime.onMessage.addListener((message) => {
     return;
   }
   if (message?.type === "SCAN_CLAIMS_DONE" && Array.isArray(message.claims)) {
+    isScanning = false;
+    setScanButtonBusy(false);
     const total = message.claims.length;
     scanProgress = {
       align: { total, completed: total, running: false },
