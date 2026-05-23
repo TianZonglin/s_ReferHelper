@@ -199,7 +199,7 @@ function getLanguageDisplayName(lang) {
   return value;
 }
 
-function buildOperationArea(item) {
+function buildOperationArea(item, index) {
   const percent = getPossibilityPercent(item);
   const matchedHtml = buildHighlightedMatchHtml(item);
   const aiExplanation = item?.aiExplanation ? escapeHtml(item.aiExplanation) : "";
@@ -231,8 +231,12 @@ function buildOperationArea(item) {
         ? "不支撑原因："
         : "判断依据：";
   const evidenceText = (aiLocation || aiReason || "").replace(/\uFFFD+/g, "").trim();
+  const evidenceLinkHtml =
+    evidenceText && item?.url
+      ? ` <button type="button" class="claim-evidence-link" data-action="open-source-link" data-claim-index="${index}" title="打开原文并定位"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" aria-hidden="true" focusable="false"><path d="M320 576C461.4 576 576 461.4 576 320C576 178.6 461.4 64 320 64C178.6 64 64 178.6 64 320C64 461.4 178.6 576 320 576zM288 224C288 206.3 302.3 192 320 192C337.7 192 352 206.3 352 224C352 241.7 337.7 256 320 256C302.3 256 288 241.7 288 224zM280 288L328 288C341.3 288 352 298.7 352 312L352 400L360 400C373.3 400 384 410.7 384 424C384 437.3 373.3 448 360 448L280 448C266.7 448 256 437.3 256 424C256 410.7 266.7 400 280 400L304 400L304 336L280 336C266.7 336 256 325.3 256 312C256 298.7 266.7 288 280 288z"/></svg></button>`
+      : "";
   const evidenceHtml = evidenceText
-    ? `<div class="claim-operation-text claim-ai-evidence ${aiToneClass}"><span class="claim-ai-evidence-label">${evidenceTitle}</span>${escapeHtml(evidenceText)}</div>`
+    ? `<div class="claim-operation-text claim-ai-evidence ${aiToneClass}"><span class="claim-ai-evidence-label">${evidenceTitle}</span>${escapeHtml(evidenceText)}${evidenceLinkHtml}</div>`
     : "";
   return `
   <div class="claim-operation-area">
@@ -320,7 +324,7 @@ function renderClaimList(claims, meta = {}) {
     <span class="claim-domain">${escapeHtml(refLabel)}</span>
     <button type="button" class="claim-check-btn ${escapeHtml(statusClass)}" data-action="toggle-check" aria-expanded="${isOpen ? "true" : "false"}">${escapeHtml(statusLabel)}</button>
   </div>
-  ${isOpen ? buildOperationArea(item) : ""}
+  ${isOpen ? buildOperationArea(item, index) : ""}
 </li>`;
     })
     .join("");
@@ -349,6 +353,24 @@ async function locateClaimItem(index) {
   }
 }
 
+async function openSourceAndLocate(index) {
+  const item = latestClaims[index];
+  if (!item?.url) return;
+  const raw = String(item?.aiLocation || item?.aiExplanationReason || "").replace(/\uFFFD+/g, "").trim();
+  const fragment = raw.slice(0, 40);
+  try {
+    await chrome.runtime.sendMessage({
+      type: "OPEN_URL_HIGHLIGHT",
+      payload: {
+        url: item.url,
+        strings: fragment
+      }
+    });
+  } catch (_error) {
+    // ignore
+  }
+}
+
 function attachClaimItemEvents() {
   const items = results.querySelectorAll(".claim-row");
   items.forEach((item) => {
@@ -362,6 +384,14 @@ function attachClaimItemEvents() {
     };
 
     item.addEventListener("click", (event) => {
+      const linkBtn = event.target.closest(".claim-evidence-link");
+      if (linkBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        const claimIndex = Number(linkBtn.getAttribute("data-claim-index"));
+        openSourceAndLocate(claimIndex);
+        return;
+      }
       if (event.target.closest(".claim-check-btn")) return;
       activate();
     });

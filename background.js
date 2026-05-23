@@ -420,6 +420,84 @@ async function locateClaimOnActiveTab(claim) {
   }
 }
 
+async function openUrlAndHighlightInNewWindow(payload) {
+  const url = String(payload?.url || "").trim();
+  const strings = String(payload?.strings || "").trim();
+  if (!url) return { ok: false, error: "EMPTY_URL" };
+  try {
+    const created = await chrome.windows.create({ url, focused: true });
+    const tab = (created?.tabs && created.tabs[0]) || null;
+    const tabId = tab?.id;
+    if (!tabId) return { ok: false, error: "TAB_CREATE_FAILED" };
+
+    const maxWaitMs = 15000;
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      const t = await chrome.tabs.get(tabId);
+      if (t?.status === "complete") break;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+
+    if (!strings) return { ok: true, tabId };
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (text) => {
+        try {
+          const query = String(text || "").trim();
+          if (!query) return;
+          const bodyText = document.body?.innerText || "";
+          if (!bodyText) return;
+
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+          let bestNode = null;
+          let bestIdx = -1;
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const value = node?.nodeValue || "";
+            const idx = value.indexOf(query);
+            if (idx >= 0) {
+              bestNode = node;
+              bestIdx = idx;
+              break;
+            }
+          }
+          if (!bestNode) return;
+
+          const range = document.createRange();
+          range.setStart(bestNode, bestIdx);
+          range.setEnd(bestNode, Math.min((bestNode.nodeValue || "").length, bestIdx + query.length));
+          const rect = range.getBoundingClientRect();
+          const marker = document.createElement("div");
+          marker.style.position = "absolute";
+          marker.style.left = `${Math.max(0, rect.left + window.scrollX - 4)}px`;
+          marker.style.top = `${Math.max(0, rect.top + window.scrollY - 4)}px`;
+          marker.style.width = `${Math.max(24, rect.width + 8)}px`;
+          marker.style.height = `${Math.max(18, rect.height + 8)}px`;
+          marker.style.border = "3px solid #f59e0b";
+          marker.style.borderRadius = "6px";
+          marker.style.background = "rgba(245, 158, 11, 0.08)";
+          marker.style.zIndex = "2147483647";
+          marker.style.pointerEvents = "none";
+          marker.className = "__ref_helper_locate_marker";
+          document.querySelectorAll(".__ref_helper_locate_marker").forEach((el) => el.remove());
+          document.body.appendChild(marker);
+
+          const y = rect.top + window.scrollY - 120;
+          window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
+        } catch (_e) {
+          // ignore in page context
+        }
+      },
+      args: [strings]
+    });
+
+    return { ok: true, tabId };
+  } catch (_error) {
+    return { ok: false, error: "OPEN_AND_HIGHLIGHT_FAILED" };
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "PING") {
     sendResponse({ ok: true, source: "background" });
@@ -439,6 +517,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "LOCATE_CLAIM") {
     locateClaimOnActiveTab(message.claim).then(sendResponse);
+    return true;
+  }
+  if (message?.type === "OPEN_URL_HIGHLIGHT") {
+    openUrlAndHighlightInNewWindow(message.payload || {}).then(sendResponse);
     return true;
   }
   return false;
