@@ -3,10 +3,15 @@ const results = document.getElementById("results");
 const platformStatus = document.getElementById("platform-status");
 const containerStatus = document.getElementById("container-status");
 const classStatus = document.getElementById("class-status");
+const statusArea = document.querySelector(".status-area");
 let latestPlatformData = null;
 let latestClaims = [];
 let selectedClaimIndex = null;
 let expandedClaimIndex = null;
+let scanProgress = {
+  align: { total: 0, completed: 0, running: false },
+  eval: { total: 0, completed: 0, running: false }
+};
 
 function formatPlatformLabel(status) {
   if (status === "kimi") return "Kimi";
@@ -153,7 +158,7 @@ function getPossibilityPercent(item) {
 }
 
 function getMatchedText(item) {
-  return (item?.translatedClaimText || item?.claimText || "").trim();
+  return (item?.displayMatchText || item?.translatedClaimText || item?.claimText || "").trim();
 }
 
 function escapeRegExp(text) {
@@ -183,6 +188,18 @@ function buildOperationArea(item) {
   const aiExplanation = item?.aiExplanation ? escapeHtml(item.aiExplanation) : "";
   const claimLang = getLanguageDisplayName(item?.claimLanguage);
   const sourceLang = getLanguageDisplayName(item?.sourceLanguage);
+  const rawClaimLang = String(item?.claimLanguage || "").trim().toLowerCase();
+  const rawSourceLang = String(item?.sourceLanguage || "").trim().toLowerCase();
+  const translationNeeded =
+    rawClaimLang &&
+    rawSourceLang &&
+    rawClaimLang !== "unknown" &&
+    rawSourceLang !== "unknown" &&
+    rawClaimLang !== rawSourceLang;
+  const translationFailedHint =
+    translationNeeded && !item?.translationOk
+      ? '<div class="claim-operation-text">翻译失败，已回退为原始引文文本</div>'
+      : "";
   const explanationHtml = aiExplanation ? `<div class="claim-ai-explanation">AI\u89e3\u91ca\uff1a${aiExplanation}</div>` : "";
   return `
   <div class="claim-operation-area">
@@ -195,8 +212,40 @@ function buildOperationArea(item) {
     <div class="claim-operation-text">\u5f15\u6587\u8bed\u8a00\uff1a${escapeHtml(claimLang)}</div>
     <div class="claim-operation-text">\u539f\u6587\u8bed\u8a00\uff1a${escapeHtml(sourceLang)}</div>
     <div class="claim-operation-text">\u5339\u914d\u6587\u672c${translatedTag}\uff1a${matchedHtml}</div>
+    ${translationFailedHint}
     ${explanationHtml}
   </div>`;
+}
+
+
+function renderStatusProgress() {
+  if (!statusArea) return;
+  const old = document.getElementById("scan-phase-progress");
+  if (old) old.remove();
+  const phases = [
+    { key: "align", label: "\u5bf9\u9f50\u72b6\u6001" },
+    { key: "eval", label: "\u53ef\u4fe1\u8bc4\u4f30" }
+  ];
+  const rows = phases
+    .map(({ key, label }) => {
+      const p = scanProgress[key] || { completed: 0, total: 0, running: false };
+      const total = Math.max(0, Number(p.total || 0));
+      const completed = Math.max(0, Math.min(total || 0, Number(p.completed || 0)));
+      const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+      const statusText = p.running ? "\u5904\u7406\u4e2d" : (total > 0 ? "\u5df2\u5b8c\u6210" : "\u672a\u5f00\u59cb");
+      return `
+        <div class="phase-progress-row">
+          <div class="phase-progress-head">
+            <span class="phase-progress-label">${label}</span>
+            <span class="phase-progress-meta">${statusText} ${completed}/${total}（${percent}%）</span>
+          </div>
+          <div class="phase-progress-track">
+            <div class="phase-progress-fill" style="width:${percent}%;"></div>
+          </div>
+        </div>`;
+    })
+    .join("");
+  statusArea.insertAdjacentHTML("beforeend", `<div id="scan-phase-progress" class="phase-progress">${rows}</div>`);
 }
 
 function renderClaimList(claims, meta = {}) {
@@ -234,6 +283,13 @@ function renderClaimList(claims, meta = {}) {
     results.insertAdjacentHTML("beforeend", renderMatchedConversationContent(meta.details));
   }
   attachClaimItemEvents();
+}
+
+function updateSingleClaim(index, item) {
+  if (!Number.isInteger(index) || index < 0) return;
+  if (!latestClaims[index]) return;
+  latestClaims[index] = { ...latestClaims[index], ...(item || {}) };
+  renderClaimList(latestClaims);
 }
 
 async function locateClaimItem(index) {
@@ -288,6 +344,12 @@ async function scanClaims() {
       });
       return;
     }
+    const total = Array.isArray(response.claims) ? response.claims.length : 0;
+    scanProgress = {
+      align: { total, completed: 0, running: total > 0 },
+      eval: { total, completed: 0, running: total > 0 }
+    };
+    renderStatusProgress();
     renderClaimList(response.claims || [], response);
   } catch (_error) {
     renderErrorBlock("扫描失败", {
@@ -306,3 +368,37 @@ scanBtn?.addEventListener("click", async () => {
 });
 
 refreshPlatformStatus();
+renderStatusProgress();
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "SCAN_PHASE_PROGRESS") {
+    const phase = message.phase === "align" ? "align" : message.phase === "eval" ? "eval" : "";
+    if (!phase) return;
+    const total = Math.max(0, Number(message.total || 0));
+    const completed = Math.max(0, Math.min(total, Number(message.completed || 0)));
+    scanProgress[phase] = {
+      total,
+      completed,
+      running: total > 0 && completed < total
+    };
+    renderStatusProgress();
+    return;
+  }
+  if (message?.type === "SCAN_CLAIM_PROGRESS") {
+    updateSingleClaim(Number(message.index), message.item || {});
+    return;
+  }
+  if (message?.type === "SCAN_CLAIMS_DONE" && Array.isArray(message.claims)) {
+    const total = message.claims.length;
+    scanProgress = {
+      align: { total, completed: total, running: false },
+      eval: {
+        total,
+        completed: message.claims.filter((x) => Number.isFinite(Number(x?.possibilityScore))).length,
+        running: false
+      }
+    };
+    renderStatusProgress();
+    renderClaimList(message.claims);
+  }
+});

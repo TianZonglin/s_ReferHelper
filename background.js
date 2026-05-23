@@ -30,12 +30,18 @@ async function ensureContentScriptsInjected(tabId) {
 }
 
 async function analyzeUrlTextMatchFromStorage(payload) {
-  const aiApiKey = (await chrome.storage.local.get(["openaiApiKey"])).openaiApiKey || "";
+  const storage = await chrome.storage.local.get(["openaiApiKey", "openaiModel", "openaiBaseUrl"]);
+  const aiApiKey =
+    storage.openaiApiKey ||
+    "sk-ant-sid01--3357e5f859e0e9dde27f5228b7eae85d80c9b5875e555ac13acf95a3f54cb254";
+  const aiModel = storage.openaiModel || "gpt-5.3-codex";
+  const aiBaseUrl = storage.openaiBaseUrl || "https://relay.nf.video/v1";
   return UrlTextMatchModule.analyzeUrlTextMatch({
     url: payload?.url || "",
     inputText: payload?.inputText || "",
     openAIApiKey: aiApiKey,
-    openAIModel: payload?.model || "gpt-4.1-mini"
+    openAIModel: payload?.model || aiModel,
+    openAIBaseUrl: payload?.baseUrl || aiBaseUrl
   });
 }
 
@@ -76,6 +82,7 @@ async function evaluateClaimsByUrl(claims) {
         sourceLanguage: result?.intermediate?.sourceLanguage || "unknown",
         claimLanguage: result?.intermediate?.inputLanguage || "unknown",
         translatedClaimText: result?.intermediate?.translatedInputText || item?.claimText || "",
+        displayMatchText: result?.intermediate?.translatedInputText || item?.claimText || "",
         translationOk: !!result?.intermediate?.translationApplied
       });
       continue;
@@ -92,6 +99,7 @@ async function evaluateClaimsByUrl(claims) {
       sourceLanguage: result.intermediate.sourceLanguage,
       claimLanguage: result.intermediate.inputLanguage,
       translatedClaimText: result.intermediate.translatedInputText,
+      displayMatchText: result.intermediate.translatedInputText || item?.claimText || "",
       translationOk: result.intermediate.translationApplied,
       translationTargetLanguage: result.intermediate.sourceLanguage,
       translationError: null,
@@ -102,6 +110,181 @@ async function evaluateClaimsByUrl(claims) {
     });
   }
   return evaluated;
+}
+
+function buildPendingClaim(item) {
+  const claimText = item?.claimText || "";
+  return {
+    ...item,
+    checkClass: "status-pending-check",
+    possibilityScore: null,
+    checkLabel: "待核查 --",
+    possibilityMethod: "token_window_v1",
+    sourceFetchOk: false,
+    sourceFetchError: null,
+    sourceLanguage: "unknown",
+    claimLanguage: UrlTextMatchModule.detectDominantLanguage(claimText),
+    translatedClaimText: claimText,
+    displayMatchText: claimText,
+    translationOk: false,
+    translationError: null,
+    aiExplanation: "",
+    aiEvidenceSnippet: "",
+    aiExplanationFound: false,
+    aiExplanationReason: ""
+  };
+}
+
+async function evaluateClaimsByUrlAsync(claims, progressCallback) {
+  const storage = await chrome.storage.local.get(["openaiApiKey", "openaiModel", "openaiBaseUrl"]);
+  const aiApiKey =
+    storage.openaiApiKey ||
+    "sk-ant-sid01--3357e5f859e0e9dde27f5228b7eae85d80c9b5875e555ac13acf95a3f54cb254";
+  const aiModel = storage.openaiModel || "gpt-5.3-codex";
+  const aiBaseUrl = storage.openaiBaseUrl || "https://relay.nf.video/v1";
+
+  const working = claims.map((item) => buildPendingClaim(item));
+  const total = working.length;
+
+  // 1) fetch source text and language
+  const sourceByUrl = new Map();
+  for (const item of working) {
+    if (!item.url) continue;
+    if (sourceByUrl.has(item.url)) continue;
+    const fetched = await UrlTextMatchModule.getSourceText(item.url);
+    if (!fetched?.ok) {
+      sourceByUrl.set(item.url, { ok: false, error: fetched?.error || "SOURCE_FETCH_FAILED", text: "", lang: "unknown" });
+      continue;
+    }
+    const text = fetched.text || "";
+    const lang = UrlTextMatchModule.detectDominantLanguage(text);
+    sourceByUrl.set(item.url, { ok: true, error: null, text, lang });
+  }
+
+  // 2) batch translate by target language
+  const needTranslateByLang = new Map();
+  for (const item of working) {
+    const source = sourceByUrl.get(item.url);
+    const sourceLang = source?.ok ? source.lang : "unknown";
+    item.sourceLanguage = sourceLang;
+    item.claimLanguage = UrlTextMatchModule.detectDominantLanguage(item.claimText || "");
+    if (sourceLang !== "unknown" && item.claimLanguage !== "unknown" && item.claimLanguage !== sourceLang) {
+      const target = sourceLang === "zh" ? "zh-CN" : sourceLang === "en" ? "en" : "";
+      if (target) {
+        if (!needTranslateByLang.has(target)) needTranslateByLang.set(target, []);
+        needTranslateByLang.get(target).push({ id: item.id, text: item.claimText || "" });
+      }
+    } else {
+      item.translatedClaimText = item.claimText || "";
+      item.displayMatchText = item.claimText || "";
+      item.translationOk = true;
+    }
+  }
+
+  const translatedById = new Map();
+  let alignCompleted = 0;
+  for (const [targetLanguage, arr] of needTranslateByLang.entries()) {
+    const ret = await UrlTextMatchModule.translateBatchWithAI({
+      apiKey: aiApiKey,
+      model: aiModel,
+      baseUrl: aiBaseUrl,
+      targetLanguage,
+      items: arr
+    });
+    if (!ret.ok) {
+      for (const x of arr) {
+        translatedById.set(x.id, { ok: false, text: x.text, error: ret.error || "AI_TRANSLATION_FAILED" });
+        alignCompleted += 1;
+      }
+      if (progressCallback) {
+        progressCallback({ phase: "align", completed: alignCompleted, total });
+      }
+      continue;
+    }
+    const map = new Map(ret.items.map((x) => [x.id, x.translatedText]));
+    for (const x of arr) {
+      const t = map.get(x.id);
+      if (!t) translatedById.set(x.id, { ok: false, text: x.text, error: "AI_BATCH_TRANSLATION_PARSE_FAILED" });
+      else translatedById.set(x.id, { ok: true, text: t, error: null });
+      alignCompleted += 1;
+    }
+    if (progressCallback) {
+      progressCallback({ phase: "align", completed: alignCompleted, total });
+    }
+  }
+  // claims that don't need translation are considered aligned immediately
+  for (const item of working) {
+    if (!translatedById.has(item.id)) {
+      alignCompleted += 1;
+      translatedById.set(item.id, { ok: true, text: item.claimText || "", error: null });
+    }
+  }
+  if (progressCallback) {
+    progressCallback({ phase: "align", completed: alignCompleted, total });
+  }
+
+  // 3) score and explanation per item (async progress)
+  let evalCompleted = 0;
+  for (let i = 0; i < working.length; i += 1) {
+    const item = working[i];
+    const source = sourceByUrl.get(item.url);
+    if (!item.url || !source?.ok) {
+      item.sourceFetchOk = false;
+      item.sourceFetchError = !item.url ? "NO_URL" : (source?.error || "SOURCE_FETCH_FAILED");
+      item.checkLabel = "待核查 --";
+      evalCompleted += 1;
+      if (progressCallback) progressCallback({ phase: "eval", completed: evalCompleted, total, index: i, item });
+      continue;
+    }
+
+    const trans = translatedById.get(item.id);
+    if (trans) {
+      item.translationOk = !!trans.ok;
+      item.translationError = trans.error || null;
+      item.translatedClaimText = trans.text || item.claimText || "";
+      item.displayMatchText = item.translatedClaimText;
+    } else {
+      item.translationOk = true;
+      item.translationError = null;
+      item.translatedClaimText = item.claimText || "";
+      item.displayMatchText = item.claimText || "";
+    }
+
+    const analysis = await UrlTextMatchModule.analyzeUrlTextMatch({
+      url: item.url,
+      inputText: item.claimText || "",
+      sourceText: source.text,
+      sourceLanguage: source.lang,
+      openAIApiKey: aiApiKey,
+      openAIModel: aiModel,
+      openAIBaseUrl: aiBaseUrl
+    });
+
+    if (!analysis?.ok) {
+      item.checkLabel = "待核查 --";
+      item.possibilityScore = null;
+      item.sourceFetchOk = false;
+      item.sourceFetchError = (analysis?.errors && analysis.errors[0]) || "ANALYZE_FAILED";
+      evalCompleted += 1;
+      if (progressCallback) progressCallback({ phase: "eval", completed: evalCompleted, total, index: i, item });
+      continue;
+    }
+
+    item.possibilityScore = analysis.output.matchScore;
+    item.checkLabel = `待核查 ${analysis.output.matchPercent}%`;
+    item.sourceFetchOk = true;
+    item.sourceFetchError = null;
+    item.sourceLanguage = analysis.intermediate.sourceLanguage;
+    item.claimLanguage = analysis.intermediate.inputLanguage;
+    item.aiExplanation = analysis.output.explanation?.aiExplanation || "";
+    item.aiEvidenceSnippet = analysis.output.explanation?.evidenceSnippet || "";
+    item.aiExplanationFound = !!analysis.output.explanation?.found;
+    item.aiExplanationReason = analysis.output.explanation?.reason || "";
+    evalCompleted += 1;
+    if (progressCallback) progressCallback({ phase: "eval", completed: evalCompleted, total, index: i, item });
+  }
+
+  return working;
 }
 
 async function detectPlatformFromActiveTab() {
@@ -153,7 +336,35 @@ async function scanClaimsFromActiveTab() {
   try {
     const result = await chrome.tabs.sendMessage(tabId, { type: "EXTRACT_CLAIMS" });
     const rawClaims = Array.isArray(result?.claims) ? result.claims : [];
-    const evaluatedClaims = await evaluateClaimsByUrl(rawClaims);
+    const pendingClaims = rawClaims.map((item) => buildPendingClaim(item));
+
+    // asynchronous background evaluation and sidepanel updates
+    evaluateClaimsByUrlAsync(rawClaims, ({ phase, completed, total, index, item }) => {
+      chrome.runtime.sendMessage({
+        type: "SCAN_PHASE_PROGRESS",
+        phase,
+        completed,
+        total
+      }).catch(() => {});
+      if (phase !== "eval") return;
+      chrome.runtime.sendMessage({
+        type: "SCAN_CLAIM_PROGRESS",
+        index,
+        item
+      }).catch(() => {});
+    }).then((finalClaims) => {
+      chrome.runtime.sendMessage({
+        type: "SCAN_CLAIMS_DONE",
+        claims: finalClaims
+      }).catch(() => {});
+    }).catch((e) => {
+      chrome.runtime.sendMessage({
+        type: "SCAN_CLAIMS_DONE",
+        error: e?.message || "ASYNC_EVALUATE_FAILED",
+        claims: pendingClaims
+      }).catch(() => {});
+    });
+
     return {
       ok: !!result?.ok,
       platform: result?.platform || "unknown",
@@ -166,7 +377,7 @@ async function scanClaimsFromActiveTab() {
         matchedConversationContent: result?.matchedConversationContent || { user: [], assistant: [] },
         htmlcontent: result?.htmlcontent || { user: [], assistant: [], cite: [] }
       },
-      claims: evaluatedClaims
+      claims: pendingClaims
     };
   } catch (error) {
     return {

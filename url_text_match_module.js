@@ -2,7 +2,8 @@
   const MODULE_CACHE_TTL_MS = 10 * 60 * 1000;
   const SOURCE_TEXT_CACHE = new Map();
   const AI_TRANSLATION_CACHE = new Map();
-  const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+  const DEFAULT_OPENAI_MODEL = "gpt-5.3-codex";
+  const DEFAULT_OPENAI_BASE_URL = "https://relay.nf.video/v1";
 
   function normalizeText(text) {
     return (text || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -183,12 +184,24 @@
     return chunks.join("\n").trim();
   }
 
-  async function callOpenAIText({ apiKey, model, prompt, temperature = 0.1 }) {
+  function buildResponsesApiUrl(baseUrl) {
+    const root = (baseUrl || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "");
+    return `${root}/responses`;
+  }
+
+  async function callOpenAIText({
+    apiKey,
+    model,
+    prompt,
+    temperature = 0.1,
+    baseUrl = DEFAULT_OPENAI_BASE_URL,
+    systemPrompt = ""
+  }) {
     if (!apiKey) {
       return { ok: false, error: "AI_API_KEY_MISSING", text: "" };
     }
     try {
-      const response = await fetch("https://api.openai.com/v1/responses", {
+      const response = await fetch(buildResponsesApiUrl(baseUrl), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -196,7 +209,12 @@
         },
         body: JSON.stringify({
           model: model || DEFAULT_OPENAI_MODEL,
-          input: prompt,
+          input: systemPrompt
+            ? [
+                { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
+                { role: "user", content: [{ type: "input_text", text: prompt }] }
+              ]
+            : prompt,
           temperature
         })
       });
@@ -214,7 +232,7 @@
     }
   }
 
-  async function translateWithAI({ apiKey, model, text, targetLanguage }) {
+  async function translateWithAI({ apiKey, model, text, targetLanguage, baseUrl = DEFAULT_OPENAI_BASE_URL }) {
     const value = (text || "").trim();
     if (!value) {
       return { ok: false, error: "EMPTY_TEXT", text: "" };
@@ -232,7 +250,7 @@
       "",
       value
     ].join("\n");
-    const translated = await callOpenAIText({ apiKey, model, prompt, temperature: 0 });
+    const translated = await callOpenAIText({ apiKey, model, prompt, temperature: 0, baseUrl });
     if (!translated.ok) {
       return translated;
     }
@@ -241,6 +259,55 @@
       savedAt: Date.now()
     });
     return translated;
+  }
+
+  async function translateBatchWithAI({
+    apiKey,
+    model,
+    targetLanguage,
+    items,
+    baseUrl = DEFAULT_OPENAI_BASE_URL
+  }) {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return { ok: true, error: null, items: [] };
+    }
+    const payload = list.map((item) => ({
+      id: String(item?.id || ""),
+      text: String(item?.text || "")
+    }));
+    const systemPrompt = [
+      "You are a translation engine.",
+      "You must return valid JSON only.",
+      "Output schema must be exactly: {\"translations\":[{\"id\":\"string\",\"translatedText\":\"string\"}]}.",
+      "Do not include markdown, comments, or extra keys.",
+      `Translate all text into ${targetLanguage}.`
+    ].join(" ");
+    const prompt = JSON.stringify({ translations: payload });
+    const result = await callOpenAIText({
+      apiKey,
+      model,
+      prompt,
+      temperature: 0,
+      baseUrl,
+      systemPrompt
+    });
+    if (!result.ok) {
+      return { ok: false, error: result.error || "AI_TRANSLATION_FAILED", items: [] };
+    }
+    const parsed = safeParseJson(result.text);
+    const out = Array.isArray(parsed?.translations) ? parsed.translations : [];
+    if (!out.length) {
+      return { ok: false, error: "AI_BATCH_TRANSLATION_PARSE_FAILED", items: [] };
+    }
+    return {
+      ok: true,
+      error: null,
+      items: out.map((x) => ({
+        id: String(x?.id || ""),
+        translatedText: String(x?.translatedText || "")
+      }))
+    };
   }
 
   function safeParseJson(text) {
@@ -258,7 +325,8 @@
     translatedInputText,
     score,
     foundByRule,
-    evidenceSnippet
+    evidenceSnippet,
+    baseUrl = DEFAULT_OPENAI_BASE_URL
   }) {
     const prompt = [
       "Return JSON only with keys: found, reason, aiExplanation.",
@@ -272,7 +340,7 @@
       `foundByRule: ${foundByRule}`,
       `evidenceSnippet: ${evidenceSnippet}`
     ].join("\n");
-    const result = await callOpenAIText({ apiKey, model, prompt, temperature: 0.1 });
+    const result = await callOpenAIText({ apiKey, model, prompt, temperature: 0.1, baseUrl });
     if (!result.ok) {
       return {
         ok: false,
@@ -306,7 +374,8 @@
     sourceText = "",
     sourceLanguage = "unknown",
     openAIApiKey = "",
-    openAIModel = DEFAULT_OPENAI_MODEL
+    openAIModel = DEFAULT_OPENAI_MODEL,
+    openAIBaseUrl = DEFAULT_OPENAI_BASE_URL
   }) {
     const errors = [];
     const valueUrl = (url || "").trim();
@@ -356,7 +425,8 @@
         apiKey: openAIApiKey,
         model: openAIModel,
         text: valueInput,
-        targetLanguage
+        targetLanguage,
+        baseUrl: openAIBaseUrl
       });
       if (!translated.ok) {
         translationOk = false;
@@ -386,7 +456,8 @@
       translatedInputText,
       score,
       foundByRule,
-      evidenceSnippet: evidence.snippet
+      evidenceSnippet: evidence.snippet,
+      baseUrl: openAIBaseUrl
     });
     if (!aiExplanationResult.ok && aiExplanationResult.error) {
       errors.push(aiExplanationResult.error);
@@ -441,6 +512,8 @@
 
   globalScope.UrlTextMatchModule = {
     analyzeUrlTextMatch,
+    translateBatchWithAI,
+    getSourceText,
     detectDominantLanguage,
     normalizeText,
     computeWindowContainmentScore
