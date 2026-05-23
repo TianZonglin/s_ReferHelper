@@ -168,12 +168,22 @@ function buildHighlightedMatchHtml(item) {
   return `<span class="claim-operation-hit">${escapeHtml(text)}</span>`;
 }
 
+function getLanguageDisplayName(lang) {
+  const value = String(lang || "").trim().toLowerCase();
+  if (!value || value === "unknown") return "\u672a\u77e5";
+  if (value === "zh") return "\u4e2d\u6587";
+  if (value === "en") return "\u82f1\u6587";
+  return value;
+}
+
 function buildOperationArea(item) {
   const percent = getPossibilityPercent(item);
   const matchedHtml = buildHighlightedMatchHtml(item);
-  const translatedTag = item?.translationOk ? "（翻译后）" : "";
+  const translatedTag = item?.translationOk ? "\uff08\u7ffb\u8bd1\u540e\uff09" : "";
   const aiExplanation = item?.aiExplanation ? escapeHtml(item.aiExplanation) : "";
-  const explanationHtml = aiExplanation ? `<div class="claim-ai-explanation">AI解释：${aiExplanation}</div>` : "";
+  const claimLang = getLanguageDisplayName(item?.claimLanguage);
+  const sourceLang = getLanguageDisplayName(item?.sourceLanguage);
+  const explanationHtml = aiExplanation ? `<div class="claim-ai-explanation">AI\u89e3\u91ca\uff1a${aiExplanation}</div>` : "";
   return `
   <div class="claim-operation-area">
     <div class="claim-progress-row">
@@ -182,7 +192,9 @@ function buildOperationArea(item) {
       </div>
       <span class="claim-progress-text">${percent}%</span>
     </div>
-    <div class="claim-operation-text">匹配文本${translatedTag}：${matchedHtml}</div>
+    <div class="claim-operation-text">\u5f15\u6587\u8bed\u8a00\uff1a${escapeHtml(claimLang)}</div>
+    <div class="claim-operation-text">\u539f\u6587\u8bed\u8a00\uff1a${escapeHtml(sourceLang)}</div>
+    <div class="claim-operation-text">\u5339\u914d\u6587\u672c${translatedTag}\uff1a${matchedHtml}</div>
     ${explanationHtml}
   </div>`;
 }

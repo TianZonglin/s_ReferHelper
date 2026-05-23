@@ -37,16 +37,12 @@
     }
     const hanCount = (value.match(/[\u4e00-\u9fff]/g) || []).length;
     const latinCount = (value.match(/[A-Za-z]/g) || []).length;
-    if (hanCount === 0 && latinCount === 0) {
+    const totalCount = hanCount + latinCount;
+    if (totalCount === 0) {
       return "unknown";
     }
-    if (hanCount >= latinCount * 1.2 && hanCount >= 2) {
-      return "zh";
-    }
-    if (latinCount >= hanCount * 1.2 && latinCount >= 3) {
-      return "en";
-    }
-    return hanCount > latinCount ? "zh" : "en";
+    const hanRatio = hanCount / totalCount;
+    return hanRatio > 0.15 ? "zh" : "en";
   }
 
   function toTranslationTargetLanguage(language) {
@@ -450,4 +446,3 @@
     computeWindowContainmentScore
   };
 })(self);
-
