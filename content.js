@@ -728,7 +728,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       platform: "kimi",
       claims,
       status,
-      diagnostics
+      diagnostics,
+      matchedConversationContent: extraction?.matchedConversationContent || { user: [], assistant: [] },
+      htmlcontent: extraction?.htmlcontent || { user: [], assistant: [], cite: [] }
     });
     return true;
   }

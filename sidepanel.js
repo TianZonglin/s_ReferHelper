@@ -126,8 +126,12 @@ function renderMatchedConversationContent(details) {
   const userHtml = Array.isArray(details?.htmlcontent?.user) ? details.htmlcontent.user : [];
   const assistantHtml = Array.isArray(details?.htmlcontent?.assistant) ? details.htmlcontent.assistant : [];
   const citeHtml = Array.isArray(details?.htmlcontent?.cite) ? details.htmlcontent.cite : [];
+  const status = details?.status || null;
+  const diagnostics = details?.diagnostics || null;
   return `
     <div class="scan-debug">
+      <div>status: ${escapeHtml(stringifyDetails(status))}</div>
+      <div>diagnostics: ${escapeHtml(stringifyDetails(diagnostics))}</div>
       <div>claims: ${escapeHtml(stringifyDetails(claims))}</div>
       <div>user: ${escapeHtml(userTexts.join(" | ") || "[]")}</div>
       <div>assistant: ${escapeHtml(assistantTexts.join(" | ") || "[]")}</div>
@@ -288,6 +292,11 @@ function renderStatusProgress() {
 function renderClaimList(claims, meta = {}) {
   latestClaims = Array.isArray(claims) ? claims : [];
   if (!latestClaims.length) {
+    if (!meta?.error && meta?.details) {
+      results.innerHTML = '<p class="empty-text">\u672a\u63d0\u53d6\u5230\u5e26\u94fe\u63a5\u7684\u5f15\u7528\u53e5\u3002</p>';
+      results.insertAdjacentHTML("beforeend", renderMatchedConversationContent(meta.details || {}));
+      return;
+    }
     if (meta?.error || meta?.details || meta?.stack) {
       renderErrorBlock("未提取到带链接的引用句", meta);
       return;
@@ -489,6 +498,6 @@ chrome.runtime.onMessage.addListener((message) => {
       }
     };
     renderStatusProgress();
-    renderClaimList(message.claims);
+    renderClaimList(message.claims, message);
   }
 });

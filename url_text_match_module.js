@@ -2,7 +2,7 @@
   const MODULE_CACHE_TTL_MS = 10 * 60 * 1000;
   const SOURCE_TEXT_CACHE = new Map();
   const AI_TRANSLATION_CACHE = new Map();
-  const DEFAULT_OPENAI_MODEL = "gpt-5.3-codex";
+  const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
   const DEFAULT_OPENAI_BASE_URL = "https://relay.nf.video/v1";
 
   function normalizeText(text) {

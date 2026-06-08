@@ -33,8 +33,8 @@ async function analyzeUrlTextMatchFromStorage(payload) {
   const storage = await chrome.storage.local.get(["openaiApiKey", "openaiModel", "openaiBaseUrl"]);
   const aiApiKey =
     storage.openaiApiKey ||
-    "sk-ant-sid01--3357e5f859e0e9dde27f5228b7eae85d80c9b5875e555ac13acf95a3f54cb254";
-  const aiModel = storage.openaiModel || "gpt-5.3-codex";
+    "sk-ant-sid01--80026184e95b34b3e1f6097de72af0bbfb8e2d59b82243e72f76d9d3fc6a9b2a";
+  const aiModel = storage.openaiModel || "gpt-5.4-mini";
   const aiBaseUrl = storage.openaiBaseUrl || "https://relay.nf.video/v1";
   return UrlTextMatchModule.analyzeUrlTextMatch({
     url: payload?.url || "",
@@ -142,8 +142,8 @@ async function evaluateClaimsByUrlAsync(claims, progressCallback) {
   const storage = await chrome.storage.local.get(["openaiApiKey", "openaiModel", "openaiBaseUrl"]);
   const aiApiKey =
     storage.openaiApiKey ||
-    "sk-ant-sid01--3357e5f859e0e9dde27f5228b7eae85d80c9b5875e555ac13acf95a3f54cb254";
-  const aiModel = storage.openaiModel || "gpt-5.3-codex";
+    "sk-ant-sid01--80026184e95b34b3e1f6097de72af0bbfb8e2d59b82243e72f76d9d3fc6a9b2a";
+  const aiModel = storage.openaiModel || "gpt-5.4-mini";
   const aiBaseUrl = storage.openaiBaseUrl || "https://relay.nf.video/v1";
 
   const working = claims.map((item) => buildPendingClaim(item));
@@ -343,6 +343,16 @@ async function scanClaimsFromActiveTab() {
     const result = await chrome.tabs.sendMessage(tabId, { type: "EXTRACT_CLAIMS" });
     const rawClaims = Array.isArray(result?.claims) ? result.claims : [];
     const pendingClaims = rawClaims.map((item) => buildPendingClaim(item));
+    const details = {
+      status: result?.status || null,
+      diagnostics: result?.diagnostics || null,
+      claims: rawClaims.map((item) => ({
+        claimText: item?.claimText || "",
+        url: item?.url || ""
+      })),
+      matchedConversationContent: result?.matchedConversationContent || { user: [], assistant: [] },
+      htmlcontent: result?.htmlcontent || { user: [], assistant: [], cite: [] }
+    };
 
     // asynchronous background evaluation and sidepanel updates
     evaluateClaimsByUrlAsync(rawClaims, ({ phase, completed, total, index, item }) => {
@@ -361,13 +371,15 @@ async function scanClaimsFromActiveTab() {
     }).then((finalClaims) => {
       chrome.runtime.sendMessage({
         type: "SCAN_CLAIMS_DONE",
-        claims: finalClaims
+        claims: finalClaims,
+        details
       }).catch(() => {});
     }).catch((e) => {
       chrome.runtime.sendMessage({
         type: "SCAN_CLAIMS_DONE",
         error: e?.message || "ASYNC_EVALUATE_FAILED",
-        claims: pendingClaims
+        claims: pendingClaims,
+        details
       }).catch(() => {});
     });
 
@@ -375,14 +387,7 @@ async function scanClaimsFromActiveTab() {
       ok: !!result?.ok,
       platform: result?.platform || "unknown",
       error: result?.error || null,
-      details: {
-        claims: rawClaims.map((item) => ({
-          claimText: item?.claimText || "",
-          url: item?.url || ""
-        })),
-        matchedConversationContent: result?.matchedConversationContent || { user: [], assistant: [] },
-        htmlcontent: result?.htmlcontent || { user: [], assistant: [], cite: [] }
-      },
+      details,
       claims: pendingClaims
     };
   } catch (error) {
